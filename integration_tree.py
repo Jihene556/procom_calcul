@@ -22,7 +22,7 @@ class WayModifier(osmium.SimpleHandler):
         self.road_width = 10  # Largeur moyenne des routes
         # Building parameters
         self.building_area_spread = 50  # Rayon pour récupérer les bâtiments autour des routes
-        self.default_height = 4  # Hauteur par défaut des bâtiments (mètres)
+        self.default_building_height = 4  # Hauteur par défaut des bâtiments (mètres)
         self.level_height = 2.8  # Hauteur moyenne par étage (mètres)
         # Tree parameters
         self.tree_area_spread = 20  # Rayon pour récupérer les arbres autour des routes
@@ -212,7 +212,12 @@ class WayModifier(osmium.SimpleHandler):
         # Calculer l'ombre projetée par les bâtiments environnants
         for building in self.buildings:
             if road_area.distance(building) < self.building_area_spread:
-                building_height = self.default_height
+                # Estimer la hauteur du bâtiment
+                building_height = self.default_building_height
+                if "height" in way.tags:
+                    building_height = float(way.tags["height"])
+                elif "building:levels" in way.tags:
+                    building_height = self.level_height * float(way.tags["building:levels"])
                 shadow_polygon = self.project_shadow(building, building_height, sun_elevation, sun_azimuth, way_line_meters)
                 all_shadows.append(shadow_polygon)
 
