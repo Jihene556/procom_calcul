@@ -206,23 +206,24 @@ class WayModifier(osmium.SimpleHandler):
         sun_azimuth = solar_position["azimuth"].values[0]
         sun_elevation = solar_position["elevation"].values[0]
 
-        # Calculer l'ombre projetée par les bâtiments environnants
         shadow_area = 0
+        all_shadows = [] # Stocker tous les polygones d'ombre
+        
+        # Calculer l'ombre projetée par les bâtiments environnants
         for building in self.buildings:
             if road_area.distance(building) < self.building_area_spread:
                 building_height = self.default_height
                 shadow_polygon = self.project_shadow(building, building_height, sun_elevation, sun_azimuth, way_line_meters)
-                intersection = road_area.intersection(shadow_polygon)
-                shadow_area += intersection.area
+                all_shadows.append(shadow_polygon)
 
         # Calculer l'ombre projetée par les arbres environnants
-        all_tree_shadows = []
         for tree in self.trees:
             if road_area.distance(tree) < self.tree_area_spread:
                 tree_shadow = translate(self.default_tree_shadow, xoff=tree.x-self.x_default_tree, yoff=tree.y-self.y_default_tree)
-                all_tree_shadows.append(tree_shadow)
-        merged_tree_shadows = unary_union(all_tree_shadows)
-        intersection = road_area.intersection(merged_tree_shadows)
+                all_shadows.append(tree_shadow)
+        
+        merged_shadows = unary_union(all_shadows)
+        intersection = road_area.intersection(merged_shadows)
         shadow_area += intersection.area
 
         return (shadow_area / road_area.area) * 100 if road_area.area > 0 else 0
