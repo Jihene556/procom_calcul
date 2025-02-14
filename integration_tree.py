@@ -4,7 +4,8 @@ import datetime
 from pvlib import solarposition
 from shapely.geometry import LineString, Polygon, Point
 from pyproj import CRS, Transformer
-from shapely.ops import transform
+from shapely.ops import transform, unary_union
+from shapely.affinity import translate
 import numpy as np
 
 # Définir les systèmes de coordonnées
@@ -19,12 +20,22 @@ class WayModifier(osmium.SimpleHandler):
         self.api = overpy.Overpass()
         self.transformer_to_meters = transformer_to_meters
         self.road_width = 10  # Largeur moyenne des routes
+        # Building parameters
         self.building_area_spread = 50  # Rayon pour récupérer les bâtiments autour des routes
-        self.default_height = 10  # Hauteur par défaut des bâtiments (mètres)
-        self.level_height = 3  # Hauteur moyenne par étage (mètres)
+        self.default_height = 4  # Hauteur par défaut des bâtiments (mètres)
+        self.level_height = 2.8  # Hauteur moyenne par étage (mètres)
+        # Tree parameters
+        self.tree_area_spread = 20  # Rayon pour récupérer les arbres autour des routes
+        self.default_tree_height = 5  # Hauteur par défaut des arbres (mètres)
+        self.default_tree_width = 3  # Largeur par défaut des arbres (mètres)
+        self.x_default_tree = 0
+        self.y_default_tree = 0
+        self.default_shadow_tree = self.create_default_shadow_tree()
+        #
         self.pbf_writer = osmium.SimpleWriter(output_pbf)
         self.modified = False
         self.buildings = self.get_all_buildings(input_file)  # Récupération des bâtiments une seule fois
+        self.trees = self.get_all_trees(input_file)  # Récupération des arbres
 
     def get_all_buildings(self, input_file):
         """Charge tous les bâtiments du fichier en amont pour éviter les requêtes Overpass répétées."""
@@ -41,6 +52,66 @@ class WayModifier(osmium.SimpleHandler):
         handler = BuildingHandler()
         handler.apply_file(input_file, locations=True)
         return handler.buildings
+
+    def get_all_trees(self, input_file):
+        """Charge tous les arbres du fichier en amont pour éviter les requêtes Overpass répétées."""
+        class TreeHandler(osmium.SimpleHandler):
+            def __init__(self):
+                super().__init__()
+                self.trees = []
+
+            def node(self, n):
+                if "natural" in n.tags and n.tags["natural"] == "tree":
+                    lon, lat = n.lon, n.lat
+                    point = transform(transformer_to_meters.transform, Point(lon, lat))
+                    self.trees.append(point)
+
+        handler = TreeHandler()
+        handler.apply_file(input_file, locations=True)
+        return handler.trees
+
+    def create_default_shadow_tree(self):
+        """Create a tree approximately in the center of the map and project its shadow"""
+        half_width_tree = self.default_tree_width/2
+        center = self.get_pbf_approx_center_meters()
+        self.x_default_tree, self.y_default_tree = center.x, center.y
+        tree_base = Polygon([
+                (self.x_default_tree - half_width_tree, self.y_default_tree - half_width_tree),
+                (self.x_default_tree + half_width_tree, self.y_default_tree - half_width_tree),
+                (self.x_default_tree + half_width_tree, self.y_default_tree + half_width_tree),
+                (self.x_default_tree - half_width_tree, self.y_default_tree + half_width_tree)
+            ])
+        return self.project_shadow_tree(tree_base, self.default_tree_height)
+
+    def get_pbf_approx_center_meters(self, sample_rate=1000):
+        """Estime le centre du PBF en analysant seulement 1 nœud sur 'sample_rate'."""
+        class SampleBoundingBoxFinder(osmium.SimpleHandler):
+            def __init__(self, sample_rate):
+                super().__init__()
+                self.min_lon, self.min_lat = float('inf'), float('inf')
+                self.max_lon, self.max_lat = float('-inf'), float('-inf')
+                self.sample_rate = sample_rate
+                self.count = 0
+
+            def node(self, n):
+                if self.count % self.sample_rate == 0:  # Prend seulement 1 nœud sur sample_rate
+                    self.min_lon = min(self.min_lon, n.lon)
+                    self.min_lat = min(self.min_lat, n.lat)
+                    self.max_lon = max(self.max_lon, n.lon)
+                    self.max_lat = max(self.max_lat, n.lat)
+                self.count += 1
+
+        bbox_finder = SampleBoundingBoxFinder(sample_rate)
+        bbox_finder.apply_file(self.input_file, locations=True)
+
+        if bbox_finder.min_lon == float('inf'):
+            print("Impossible de déterminer le centre : aucun point trouvé.")
+            return None
+
+        center_lon = (bbox_finder.min_lon + bbox_finder.max_lon) / 2
+        center_lat = (bbox_finder.min_lat + bbox_finder.max_lat) / 2
+        center = Point(center_lon, center_lat)
+        return transform(transformer_to_meters.transform, center)
 
     def way(self, w):
         if "highway" in w.tags:
@@ -99,6 +170,28 @@ class WayModifier(osmium.SimpleHandler):
             projected_points[1],
             closest_points[1]
         ])
+    
+    def project_shadow_tree(self, tree_base, tree_height, sun_elevation, sun_azimuth):
+        if sun_elevation > 0:
+            shadow_length = tree_height / np.tan(np.radians(sun_elevation))
+        else:
+            return Polygon([])  # Pas d'ombre si le soleil est sous l'horizon
+
+        azimuth_radians = np.radians(sun_azimuth)
+        
+        base_coords = list(tree_base.exterior.coords)[:4]  # Prendre les 4 premiers points de l'arbre
+        shadow_parts = []
+        for i in range(len(base_coords)): # Générer les ombres pour chaque côté du carré
+            p1 = base_coords[i]
+            p2 = base_coords[(i + 1) % len(base_coords)] 
+            # Projeter ces deux points
+            p1_proj = (p1[0] + shadow_length * np.cos(azimuth_radians), p1[1] + shadow_length * np.sin(azimuth_radians))
+            p2_proj = (p2[0] + shadow_length * np.cos(azimuth_radians), p2[1] + shadow_length * np.sin(azimuth_radians))
+            quad = Polygon([p1, p2, p2_proj, p1_proj])
+            shadow_parts.append(quad)
+        shadow_polygon = unary_union(shadow_parts)
+
+        return shadow_polygon
 
     def calculate_shade(self, way):
         # Convertir la route en polygone (zone impactée par l'ombre)
@@ -121,6 +214,16 @@ class WayModifier(osmium.SimpleHandler):
                 shadow_polygon = self.project_shadow(building, building_height, sun_elevation, sun_azimuth, way_line_meters)
                 intersection = road_area.intersection(shadow_polygon)
                 shadow_area += intersection.area
+
+        # Calculer l'ombre projetée par les arbres environnants
+        all_tree_shadows = []
+        for tree in self.trees:
+            if road_area.distance(tree) < self.tree_area_spread:
+                tree_shadow = translate(self.default_tree_shadow, xoff=tree.x-self.x_default_tree, yoff=tree.y-self.y_default_tree)
+                all_tree_shadows.append(tree_shadow)
+        merged_tree_shadows = unary_union(all_tree_shadows)
+        intersection = road_area.intersection(merged_tree_shadows)
+        shadow_area += intersection.area
 
         return (shadow_area / road_area.area) * 100 if road_area.area > 0 else 0
 
