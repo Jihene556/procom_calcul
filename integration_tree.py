@@ -20,6 +20,7 @@ class WayModifier(osmium.SimpleHandler):
         self.api = overpy.Overpass()
         self.transformer_to_meters = transformer_to_meters
         self.road_width = 10  # Largeur moyenne des routes
+        self.input_file = input_file
         # Building parameters
         self.building_area_spread = 50  # Rayon pour récupérer les bâtiments autour des routes
         self.default_building_height = 4  # Hauteur par défaut des bâtiments (mètres)
@@ -73,17 +74,22 @@ class WayModifier(osmium.SimpleHandler):
     def create_default_shadow_tree(self):
         """Create a tree approximately in the center of the map and project its shadow"""
         half_width_tree = self.default_tree_width/2
-        center = self.get_pbf_approx_center_meters()
-        self.x_default_tree, self.y_default_tree = center.x, center.y
+        center = self.get_pbf_approx_center()
+        center_meters = transform(transformer_to_meters.transform, center)
+        self.x_default_tree, self.y_default_tree = center_meters.x, center_meters.y
         tree_base = Polygon([
                 (self.x_default_tree - half_width_tree, self.y_default_tree - half_width_tree),
                 (self.x_default_tree + half_width_tree, self.y_default_tree - half_width_tree),
                 (self.x_default_tree + half_width_tree, self.y_default_tree + half_width_tree),
                 (self.x_default_tree - half_width_tree, self.y_default_tree + half_width_tree)
             ])
-        return self.project_shadow_tree(tree_base, self.default_tree_height)
+        solar_position = solarposition.get_solarposition(datetime.datetime.today(), center.y, center.x)
+        sun_azimuth = solar_position["azimuth"].values[0]
+        #print(f"sun azimuth : {sun_azimuth}" )
+        sun_elevation = solar_position["elevation"].values[0]
+        return self.project_shadow_tree(tree_base, self.default_tree_height, sun_elevation, sun_azimuth)
 
-    def get_pbf_approx_center_meters(self, sample_rate=1000):
+    def get_pbf_approx_center(self, sample_rate=1000):
         """Estime le centre du PBF en analysant seulement 1 nœud sur 'sample_rate'."""
         class SampleBoundingBoxFinder(osmium.SimpleHandler):
             def __init__(self, sample_rate):
@@ -111,7 +117,7 @@ class WayModifier(osmium.SimpleHandler):
         center_lon = (bbox_finder.min_lon + bbox_finder.max_lon) / 2
         center_lat = (bbox_finder.min_lat + bbox_finder.max_lat) / 2
         center = Point(center_lon, center_lat)
-        return transform(transformer_to_meters.transform, center)
+        return center
 
     def way(self, w):
         if "highway" in w.tags:
@@ -204,9 +210,9 @@ class WayModifier(osmium.SimpleHandler):
         longitude, latitude = way_line_latlon.centroid.x, way_line_latlon.centroid.y
         solar_position = solarposition.get_solarposition(datetime.datetime.today(), latitude, longitude)
         sun_azimuth = solar_position["azimuth"].values[0]
+        #print(f"sun azimuth : {sun_azimuth}" )
         sun_elevation = solar_position["elevation"].values[0]
 
-        shadow_area = 0
         all_shadows = [] # Stocker tous les polygones d'ombre
         
         # Calculer l'ombre projetée par les bâtiments environnants
@@ -221,22 +227,28 @@ class WayModifier(osmium.SimpleHandler):
                 shadow_polygon = self.project_shadow(building, building_height, sun_elevation, sun_azimuth, way_line_meters)
                 all_shadows.append(shadow_polygon)
 
-        # Calculer l'ombre projetée par les arbres environnants
+        merged_shadows_1 = unary_union(all_shadows)
+        intersection = road_area.intersection(merged_shadows_1)
+        print("-----------------------------------------")
+        print(f"shadow after buildinds {intersection.area}")
+
+         #Calculer l'ombre projetée par les arbres environnants
         for tree in self.trees:
             if road_area.distance(tree) < self.tree_area_spread:
-                tree_shadow = translate(self.default_tree_shadow, xoff=tree.x-self.x_default_tree, yoff=tree.y-self.y_default_tree)
+                tree_shadow = translate(self.default_shadow_tree, xoff=tree.x-self.x_default_tree, yoff=tree.y-self.y_default_tree)
                 all_shadows.append(tree_shadow)
         
         merged_shadows = unary_union(all_shadows)
         intersection = road_area.intersection(merged_shadows)
-        shadow_area += intersection.area
+        print(f"shadow after buildinds and trees {intersection.area}")
+        shadow_area = intersection.area
 
         return (shadow_area / road_area.area) * 100 if road_area.area > 0 else 0
 
 
 # Chemins des fichiers
-input_file = "C:\\users\\jihen\\FiseA3\\procom\\calcul\\pays_de_la_loire-latest.osm.pbf"
-output_pbf = "C:\\Users\\jihen\\FiseA3\\procom\\calcul\\pays_de_la_loire-latest-updated.osm.pbf"
+input_file = "C:\\users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test.pbf"
+output_pbf = "C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test_updtd.pbf"
 
 modifier = WayModifier(input_file, output_pbf)
 modifier.apply_file(input_file, locations=True)
