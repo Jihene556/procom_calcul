@@ -1,5 +1,4 @@
 import osmium
-import overpy
 import datetime
 from pvlib import solarposition
 from shapely.geometry import LineString, Polygon, Point
@@ -23,10 +22,12 @@ if __name__ == "__main__":
     class WayModifier(osmium.SimpleHandler):
         def __init__(self, input_file, output_pbf):
             super().__init__()
-            self.api = overpy.Overpass()
             self.transformer_to_meters = transformer_to_meters
             self.road_width = 10  # Largeur moyenne des routes
             self.input_file = input_file
+            self.pbf_writer = osmium.SimpleWriter(output_pbf)
+            self.modified = False
+            self.buildings, self.trees, self.center = self.get_data(input_file)  # Récupération des bâtiments et des arbres une seule fois
             # Building parameters
             self.building_area_spread = 50  # Rayon pour récupérer les bâtiments autour des routes
             self.default_building_height = 4  # Hauteur par défaut des bâtiments (mètres)
@@ -38,13 +39,10 @@ if __name__ == "__main__":
             self.x_default_tree = 0
             self.y_default_tree = 0
             self.default_shadow_tree = self.create_default_shadow_tree()
-            #
-            self.pbf_writer = osmium.SimpleWriter(output_pbf)
-            self.modified = False
-            self.buildings, self.trees = self.get_all_buildings(input_file)  # Récupération des bâtiments une seule fois
-            #self.trees = self.get_all_trees(input_file)  # Récupération des arbres
 
-        def get_all_buildings(self, input_file):
+        def get_data(self, input_file):
+            '''Get all buildings and trees from the input file, 
+            and approximate center of the PBF'''
             # Étape 1 : Compter le nombre total de bâtiments pour la progression
             class CounterHandler(osmium.SimpleHandler):
                 def __init__(self):
@@ -59,18 +57,25 @@ if __name__ == "__main__":
             counter.apply_file(input_file, locations=True)
 
             # Étape 2 : Handler avec barre de progression
-            class BuildingHandler(osmium.SimpleHandler):
-                def __init__(self, total_ways):
+            class DataHandler(osmium.SimpleHandler):
+                def __init__(self, total_ways, sample_rate=1000):
                     super().__init__()
                     self.buildings = []
                     self.trees = []
                     self.pbar = tqdm(total=total_ways, desc="Processing Buildings and trees", unit="way")
+                    
+                    # To get approx center
+                    self.min_lon, self.min_lat = float('inf'), float('inf')
+                    self.max_lon, self.max_lat = float('-inf'), float('-inf')
+                    self.sample_rate = sample_rate
+                    self.node_count = 0
 
                 def way(self, w):
                     if "building" in w.tags:
                         coords = [(n.lon, n.lat) for n in w.nodes]
                         self.buildings.append(transform(transformer_to_meters.transform, Polygon(coords)))
                     self.pbar.update(1)  # Mise à jour de la barre de progression
+                
                 def node(self, n):
                     if "natural" in n.tags and n.tags["natural"] == "tree":
                         if self.pbar is None:  # Initialise tqdm seulement au premier arbre
@@ -78,20 +83,37 @@ if __name__ == "__main__":
                         lon, lat = n.lon, n.lat
                         point = transform(transformer_to_meters.transform, Point(lon, lat))
                         self.trees.append(point)
+
+                    # To get approx center
+                    if self.node_count % self.sample_rate == 0:  # Prend seulement 1 nœud sur sample_rate
+                        self.min_lon = min(self.min_lon, n.lon)
+                        self.min_lat = min(self.min_lat, n.lat)
+                        self.max_lon = max(self.max_lon, n.lon)
+                        self.max_lat = max(self.max_lat, n.lat)
+                    self.node_count += 1
+                
                 def close(self):
                     self.pbar.close()  # Ferme la barre de progression
 
-            handler = BuildingHandler(counter.count)
+            handler = DataHandler(counter.count)
             handler.apply_file(input_file, locations=True)
+
+            # To get approx center
+            if handler.min_lon == float('inf'):
+                print("Impossible de déterminer le centre : aucun point trouvé.")
+                return None
+            center_lon = (handler.min_lon + handler.max_lon) / 2
+            center_lat = (handler.min_lat + handler.max_lat) / 2
+            center = Point(center_lon, center_lat)
+
             handler.close()  # Fermer proprement la barre de progression
 
-            return handler.buildings, handler.trees
-
+            return handler.buildings, handler.trees, center
 
         def create_default_shadow_tree(self):
             """Create a tree approximately in the center of the map and project its shadow"""
             half_width_tree = self.default_tree_width/2
-            center = self.get_pbf_approx_center()
+            center = self.center
             center_meters = transform(transformer_to_meters.transform, center)
             self.x_default_tree, self.y_default_tree = center_meters.x, center_meters.y
             tree_base = Polygon([
@@ -105,36 +127,6 @@ if __name__ == "__main__":
             #print(f"sun azimuth : {sun_azimuth}" )
             sun_elevation = solar_position["elevation"].values[0]
             return self.project_shadow_tree(tree_base, self.default_tree_height, sun_elevation, sun_azimuth)
-
-        def get_pbf_approx_center(self, sample_rate=1000):
-            """Estime le centre du PBF en analysant seulement 1 nœud sur 'sample_rate'."""
-            class SampleBoundingBoxFinder(osmium.SimpleHandler):
-                def __init__(self, sample_rate):
-                    super().__init__()
-                    self.min_lon, self.min_lat = float('inf'), float('inf')
-                    self.max_lon, self.max_lat = float('-inf'), float('-inf')
-                    self.sample_rate = sample_rate
-                    self.count = 0
-
-                def node(self, n):
-                    if self.count % self.sample_rate == 0:  # Prend seulement 1 nœud sur sample_rate
-                        self.min_lon = min(self.min_lon, n.lon)
-                        self.min_lat = min(self.min_lat, n.lat)
-                        self.max_lon = max(self.max_lon, n.lon)
-                        self.max_lat = max(self.max_lat, n.lat)
-                    self.count += 1
-
-            bbox_finder = SampleBoundingBoxFinder(sample_rate)
-            bbox_finder.apply_file(self.input_file, locations=True)
-
-            if bbox_finder.min_lon == float('inf'):
-                print("Impossible de déterminer le centre : aucun point trouvé.")
-                return None
-
-            center_lon = (bbox_finder.min_lon + bbox_finder.max_lon) / 2
-            center_lat = (bbox_finder.min_lat + bbox_finder.max_lat) / 2
-            center = Point(center_lon, center_lat)
-            return center
 
         def way(self, w):
             if "highway" in w.tags:
