@@ -1,5 +1,4 @@
 import osmium
-import datetime
 from pvlib import solarposition
 from shapely.geometry import LineString, Polygon, Point
 from pyproj import CRS, Transformer
@@ -9,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 import cProfile
 import pstats
+import pandas as pd
 
 if __name__ == "__main__":
     profiler = cProfile.Profile()
@@ -22,6 +22,7 @@ if __name__ == "__main__":
     class WayModifier(osmium.SimpleHandler):
         def __init__(self, input_file, output_pbf):
             super().__init__()
+            self.time = pd.DatetimeIndex([pd.Timestamp.now().tz_localize("Europe/Paris")])
             self.transformer_to_meters = transformer_to_meters
             self.road_width = 10  # Largeur moyenne des routes
             self.input_file = input_file
@@ -122,9 +123,8 @@ if __name__ == "__main__":
                     (self.x_default_tree + half_width_tree, self.y_default_tree + half_width_tree),
                     (self.x_default_tree - half_width_tree, self.y_default_tree + half_width_tree)
                 ])
-            solar_position = solarposition.get_solarposition(datetime.datetime.today(), center.y, center.x)
+            solar_position = solarposition.get_solarposition(self.time, center.y, center.x)
             sun_azimuth = solar_position["azimuth"].values[0]
-            #print(f"sun azimuth : {sun_azimuth}" )
             sun_elevation = solar_position["elevation"].values[0]
             return self.project_shadow_tree(tree_base, self.default_tree_height, sun_elevation, sun_azimuth)
 
@@ -167,15 +167,12 @@ if __name__ == "__main__":
             return [distances[0][1], distances[1][1]]
 
         def project_shadow(self, building, building_height, sun_elevation, sun_azimuth, road):
-            #print("coucou")
             if sun_elevation > 0:
                 shadow_length = building_height / np.tan(np.radians(sun_elevation))
             else:
                 return Polygon([])  # Pas d'ombre si le soleil est sous l'horizon
-            #print("coco")
             azimuth_radians = np.radians(sun_azimuth)
             closest_points = self.get_closest_points_to_road(building, road)
-            #print("hihi")
             projected_points = [
                 (x + shadow_length * np.cos(azimuth_radians), y + shadow_length * np.sin(azimuth_radians))
                 for x, y in closest_points
@@ -219,10 +216,9 @@ if __name__ == "__main__":
             road_area = way_line_meters.buffer(self.road_width)
 
             # Obtenir la position du soleil
-            longitude, latitude = way_line_latlon.centroid.x, way_line_latlon.centroid.y
-            solar_position = solarposition.get_solarposition(datetime.datetime.today(), coords[0][1], coords[0][0])
+            #longitude, latitude = way_line_latlon.centroid.x, way_line_latlon.centroid.y
+            solar_position = solarposition.get_solarposition(self.time, coords[0][1], coords[0][0])
             sun_azimuth = solar_position["azimuth"].values[0]
-            #print(f"sun azimuth : {sun_azimuth}" )
             sun_elevation = solar_position["elevation"].values[0]
 
             all_shadows = [] # Stocker tous les polygones d'ombre
