@@ -7,6 +7,7 @@ from pyproj import CRS, Transformer
 from shapely.ops import transform, unary_union
 from shapely.affinity import translate
 import numpy as np
+from tqdm import tqdm
 
 # Définir les systèmes de coordonnées
 crs_latlon = CRS("EPSG:4326")  # WGS84 (latitude/longitude)
@@ -216,7 +217,9 @@ class WayModifier(osmium.SimpleHandler):
         all_shadows = [] # Stocker tous les polygones d'ombre
         
         # Calculer l'ombre projetée par les bâtiments environnants
-        for building in self.buildings:
+        # Calculer l'ombre projetée par les bâtiments environnants
+        print("Calcul des ombres des bâtiments...")
+        for building in tqdm(self.buildings, desc="Bâtiments", unit="bâtiment"):
             if road_area.distance(building) < self.building_area_spread:
                 # Estimer la hauteur du bâtiment
                 building_height = self.default_building_height
@@ -229,26 +232,26 @@ class WayModifier(osmium.SimpleHandler):
 
         merged_shadows_1 = unary_union(all_shadows)
         intersection = road_area.intersection(merged_shadows_1)
-        print("-----------------------------------------")
-        print(f"shadow after buildinds {intersection.area}")
+        #print(f"🛑 Ombre après bâtiments: {intersection.area}")
 
-         #Calculer l'ombre projetée par les arbres environnants
-        for tree in self.trees:
+        # Calculer l'ombre projetée par les arbres environnants
+        print("Calcul des ombres des arbres...")
+        for tree in tqdm(self.trees, desc="Arbres", unit="arbre"):
             if road_area.distance(tree) < self.tree_area_spread:
                 tree_shadow = translate(self.default_shadow_tree, xoff=tree.x-self.x_default_tree, yoff=tree.y-self.y_default_tree)
                 all_shadows.append(tree_shadow)
-        
+
         merged_shadows = unary_union(all_shadows)
         intersection = road_area.intersection(merged_shadows)
-        print(f"shadow after buildinds and trees {intersection.area}")
+        #print(f"🌳 Ombre après bâtiments et arbres: {intersection.area}")
         shadow_area = intersection.area
 
         return (shadow_area / road_area.area) * 100 if road_area.area > 0 else 0
 
 
 # Chemins des fichiers
-input_file = "C:\\users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test.pbf"
-output_pbf = "C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test_updtd.pbf"
+input_file = "C:\\users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test2.pbf"
+output_pbf = "C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test2_updtd.pbf"
 
 modifier = WayModifier(input_file, output_pbf)
 modifier.apply_file(input_file, locations=True)
