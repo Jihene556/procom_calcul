@@ -366,8 +366,8 @@ if __name__ == "__main__":
                 return 0  # No shadows found
 
     # File paths
-    input_file = "C:\\Users\\yahia\\Documents\\IMT\\procom_calcul\\test2.pbf"
-    output_pbf = "C:\\Users\\yahia\\Documents\\IMT\\procom_calcul\\test_updated.pbf"
+    input_file = "C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test2.pbf"
+    output_pbf = "C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\test2_updatedd.pbf"
     
     # Process with optimized way modifier
     modifier = WayModifier(input_file, output_pbf)
