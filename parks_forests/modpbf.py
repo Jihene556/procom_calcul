@@ -1,3 +1,27 @@
+# MIT License
+# 
+# Copyright (c) 2025 REY Alice, HAJ HAMOUDA Jihene, HENI Yahia,
+# ALAOUI Mohamed Mehdi, MHADHBI Kaies
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+
 import osmium
 from shapely.geometry import Polygon, LineString
 import shapely.wkt
@@ -11,7 +35,7 @@ class ParkForestCollector(osmium.SimpleHandler):
         # Each entry is a tuple: (polygon, name)
         self.parks = []
         self.nodes_cache = {}
-        
+                        
     def node(self, n):
         # Cache node coordinates
         self.nodes_cache[n.id] = (n.location.lon, n.location.lat)
@@ -112,7 +136,7 @@ def process_osm_file(input_file, output_file):
     print("\nProcessing complete!")
 
 if __name__ == "__main__":
-    # To change according to the repository where your input file is located and where you want to put your output file
+    # To change according to the repository where your input file is located and where you want to store your output file
     input_file = r"C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\parks_forests\\nantes.osm.pbf"
     output_file = r"C:\\Users\\jihen\\FiseA3\\procom\\meth_calcul\\procom_calcul\\parks_forests\\nantes-updated.osm.pbf"
     
